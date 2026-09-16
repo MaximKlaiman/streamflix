@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+:root {
+  --nf-black: #141414;
+  --nf-black-deep: #0a0a0a;
+  --nf-red: #e50914;
+  --nf-red-hover: #f6121d;
+  --nf-gray: #808080;
+  --nf-gray-light: #b3b3b3;
+}
+
+@theme inline {
+  --color-nf-black: var(--nf-black);
+  --color-nf-black-deep: var(--nf-black-deep);
+  --color-nf-red: var(--nf-red);
+  --color-nf-red-hover: var(--nf-red-hover);
+  --color-nf-gray: var(--nf-gray);
+  --color-nf-gray-light: var(--nf-gray-light);
+  --font-sans: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--nf-black);
+  color: #ffffff;
+  font-family: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+}
+
+/* Hide scrollbar on the carousel rows but keep them scrollable */
+.row-scroll::-webkit-scrollbar {
+  display: none;
+}
+.row-scroll {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
