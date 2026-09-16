@@ -6,7 +6,7 @@ export async function GET() {
   const userId = await getSessionUserId();
   if (!userId) return NextResponse.json({ error: "Sign in to view your list." }, { status: 401 });
 
-  const items = myListRepo.listFor(userId);
+  const items = await myListRepo.listFor(userId);
   return NextResponse.json({
     items: items.map((i) => ({
       tmdbId: i.tmdb_id,
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing tmdbId, mediaType, or title." }, { status: 400 });
   }
 
-  myListRepo.add(userId, { tmdbId, mediaType, title, posterPath: posterPath ?? null });
+  await myListRepo.add(userId, { tmdbId, mediaType, title, posterPath: posterPath ?? null });
   return NextResponse.json({ ok: true });
 }
 
@@ -41,6 +41,6 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Missing tmdbId or mediaType." }, { status: 400 });
   }
 
-  myListRepo.remove(userId, tmdbId, mediaType);
+  await myListRepo.remove(userId, tmdbId, mediaType);
   return NextResponse.json({ ok: true });
 }

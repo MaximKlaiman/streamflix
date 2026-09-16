@@ -17,13 +17,13 @@ export async function POST(req: NextRequest) {
   }
   const name = typeof displayName === "string" && displayName.trim() ? displayName.trim() : email.split("@")[0];
 
-  if (userRepo.findByEmail(email)) {
+  if (await userRepo.findByEmail(email)) {
     return NextResponse.json({ error: "An account with that email already exists." }, { status: 409 });
   }
 
   const passwordHash = await hashPassword(password);
-  const user = userRepo.create(email, passwordHash, name);
-  profileRepo.create(user.id, name, AVATAR_COLORS[0]);
+  const user = await userRepo.create(email, passwordHash, name);
+  await profileRepo.create(user.id, name, AVATAR_COLORS[0]);
   await createSessionCookie(user.id);
   await clearActiveProfileCookie();
 

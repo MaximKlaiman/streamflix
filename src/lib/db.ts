@@ -1,55 +1,53 @@
 import "server-only";
-import Database from "better-sqlite3";
-import path from "node:path";
-import fs from "node:fs";
+import { createClient } from "@libsql/client";
 
-// A real embedded SQL database - no external service needed to run this
-// locally. Note for deployment: on serverless platforms (e.g. Vercel) the
-// filesystem is ephemeral, so a file-based SQLite db will NOT persist
-// writes across invocations in production. For a deployed demo where My
-// List needs to persist, swap this file for a hosted SQLite-compatible
-// database such as Turso (https://turso.tech) - same SQL, same queries
-// below, just a different client. See README "Deploying" section.
-const dbPath = path.join(process.cwd(), "data", "app.db");
+// A real hosted SQL database (Turso/libSQL) instead of a local SQLite file -
+// serverless platforms like Vercel have an ephemeral, read-only filesystem,
+// so a file-based database wouldn't persist writes in production. Turso
+// speaks the same SQL as the SQLite this project started with, just over
+// the network, which is why the schema/queries below are unchanged.
+const client = createClient({
+  url: process.env.TURSO_DATABASE_URL!,
+  authToken: process.env.TURSO_AUTH_TOKEN!,
+});
 
-let _db: Database.Database | null = null;
-function getDb(): Database.Database {
-  if (_db) return _db;
-  // data/ is gitignored on purpose (nobody should commit a database file),
-  // which means it doesn't exist yet on a fresh clone - create it before
-  // better-sqlite3 tries to open a file inside it.
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  _db = new Database(dbPath);
-  _db.pragma("journal_mode = WAL");
-  _db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      display_name TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS my_list (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      tmdb_id INTEGER NOT NULL,
-      media_type TEXT NOT NULL,
-      title TEXT NOT NULL,
-      poster_path TEXT,
-      added_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(user_id, tmdb_id, media_type)
-    );
-
-    CREATE TABLE IF NOT EXISTS profiles (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      avatar_color TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-  return _db;
+let schemaReady: Promise<void> | null = null;
+function ready(): Promise<void> {
+  if (!schemaReady) {
+    schemaReady = (async () => {
+      await client.execute(`
+        CREATE TABLE IF NOT EXISTS users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          email TEXT UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `);
+      await client.execute(`
+        CREATE TABLE IF NOT EXISTS my_list (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          tmdb_id INTEGER NOT NULL,
+          media_type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          poster_path TEXT,
+          added_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(user_id, tmdb_id, media_type)
+        )
+      `);
+      await client.execute(`
+        CREATE TABLE IF NOT EXISTS profiles (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          avatar_color TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `);
+    })();
+  }
+  return schemaReady;
 }
 
 export interface UserRow {
@@ -60,20 +58,26 @@ export interface UserRow {
 }
 
 export const userRepo = {
-  create(email: string, passwordHash: string, displayName: string): UserRow {
-    const stmt = getDb().prepare(
-      "INSERT INTO users (email, password_hash, display_name) VALUES (?, ?, ?)"
-    );
-    const info = stmt.run(email.toLowerCase(), passwordHash, displayName);
-    return this.findById(info.lastInsertRowid as number)!;
+  async create(email: string, passwordHash: string, displayName: string): Promise<UserRow> {
+    await ready();
+    const result = await client.execute({
+      sql: "INSERT INTO users (email, password_hash, display_name) VALUES (?, ?, ?)",
+      args: [email.toLowerCase(), passwordHash, displayName],
+    });
+    return (await this.findById(Number(result.lastInsertRowid)))!;
   },
-  findByEmail(email: string): UserRow | undefined {
-    return getDb()
-      .prepare("SELECT * FROM users WHERE email = ?")
-      .get(email.toLowerCase()) as UserRow | undefined;
+  async findByEmail(email: string): Promise<UserRow | undefined> {
+    await ready();
+    const result = await client.execute({
+      sql: "SELECT * FROM users WHERE email = ?",
+      args: [email.toLowerCase()],
+    });
+    return result.rows[0] as unknown as UserRow | undefined;
   },
-  findById(id: number): UserRow | undefined {
-    return getDb().prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow | undefined;
+  async findById(id: number): Promise<UserRow | undefined> {
+    await ready();
+    const result = await client.execute({ sql: "SELECT * FROM users WHERE id = ?", args: [id] });
+    return result.rows[0] as unknown as UserRow | undefined;
   },
 };
 
@@ -87,23 +91,31 @@ export interface MyListRow {
 }
 
 export const myListRepo = {
-  listFor(userId: number): MyListRow[] {
-    return getDb()
-      .prepare("SELECT * FROM my_list WHERE user_id = ? ORDER BY added_at DESC")
-      .all(userId) as MyListRow[];
+  async listFor(userId: number): Promise<MyListRow[]> {
+    await ready();
+    const result = await client.execute({
+      sql: "SELECT * FROM my_list WHERE user_id = ? ORDER BY added_at DESC",
+      args: [userId],
+    });
+    return result.rows as unknown as MyListRow[];
   },
-  add(userId: number, item: { tmdbId: number; mediaType: string; title: string; posterPath: string | null }) {
-    getDb()
-      .prepare(
-        `INSERT OR IGNORE INTO my_list (user_id, tmdb_id, media_type, title, poster_path)
-         VALUES (?, ?, ?, ?, ?)`
-      )
-      .run(userId, item.tmdbId, item.mediaType, item.title, item.posterPath);
+  async add(
+    userId: number,
+    item: { tmdbId: number; mediaType: string; title: string; posterPath: string | null }
+  ) {
+    await ready();
+    await client.execute({
+      sql: `INSERT OR IGNORE INTO my_list (user_id, tmdb_id, media_type, title, poster_path)
+            VALUES (?, ?, ?, ?, ?)`,
+      args: [userId, item.tmdbId, item.mediaType, item.title, item.posterPath],
+    });
   },
-  remove(userId: number, tmdbId: number, mediaType: string) {
-    getDb()
-      .prepare("DELETE FROM my_list WHERE user_id = ? AND tmdb_id = ? AND media_type = ?")
-      .run(userId, tmdbId, mediaType);
+  async remove(userId: number, tmdbId: number, mediaType: string) {
+    await ready();
+    await client.execute({
+      sql: "DELETE FROM my_list WHERE user_id = ? AND tmdb_id = ? AND media_type = ?",
+      args: [userId, tmdbId, mediaType],
+    });
   },
 };
 
@@ -115,24 +127,33 @@ export interface ProfileRow {
 }
 
 export const profileRepo = {
-  listForUser(userId: number): ProfileRow[] {
-    return getDb()
-      .prepare("SELECT * FROM profiles WHERE user_id = ? ORDER BY id ASC")
-      .all(userId) as ProfileRow[];
+  async listForUser(userId: number): Promise<ProfileRow[]> {
+    await ready();
+    const result = await client.execute({
+      sql: "SELECT * FROM profiles WHERE user_id = ? ORDER BY id ASC",
+      args: [userId],
+    });
+    return result.rows as unknown as ProfileRow[];
   },
-  findById(id: number): ProfileRow | undefined {
-    return getDb().prepare("SELECT * FROM profiles WHERE id = ?").get(id) as ProfileRow | undefined;
+  async findById(id: number): Promise<ProfileRow | undefined> {
+    await ready();
+    const result = await client.execute({ sql: "SELECT * FROM profiles WHERE id = ?", args: [id] });
+    return result.rows[0] as unknown as ProfileRow | undefined;
   },
-  create(userId: number, name: string, avatarColor: string): ProfileRow {
-    const info = getDb()
-      .prepare("INSERT INTO profiles (user_id, name, avatar_color) VALUES (?, ?, ?)")
-      .run(userId, name, avatarColor);
-    return this.findById(info.lastInsertRowid as number)!;
+  async create(userId: number, name: string, avatarColor: string): Promise<ProfileRow> {
+    await ready();
+    const result = await client.execute({
+      sql: "INSERT INTO profiles (user_id, name, avatar_color) VALUES (?, ?, ?)",
+      args: [userId, name, avatarColor],
+    });
+    return (await this.findById(Number(result.lastInsertRowid)))!;
   },
-  rename(id: number, name: string) {
-    getDb().prepare("UPDATE profiles SET name = ? WHERE id = ?").run(name, id);
+  async rename(id: number, name: string) {
+    await ready();
+    await client.execute({ sql: "UPDATE profiles SET name = ? WHERE id = ?", args: [name, id] });
   },
-  remove(id: number) {
-    getDb().prepare("DELETE FROM profiles WHERE id = ?").run(id);
+  async remove(id: number) {
+    await ready();
+    await client.execute({ sql: "DELETE FROM profiles WHERE id = ?", args: [id] });
   },
 };

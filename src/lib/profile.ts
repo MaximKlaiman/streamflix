@@ -32,7 +32,7 @@ export async function getActiveProfileId(userId: number): Promise<number | null>
   const profileId = raw ? Number(raw) : NaN;
   if (!Number.isInteger(profileId)) return null;
 
-  const profile = profileRepo.findById(profileId);
+  const profile = await profileRepo.findById(profileId);
   if (!profile || profile.user_id !== userId) return null;
   return profileId;
 }

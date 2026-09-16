@@ -20,7 +20,7 @@ Being upfront about this, since it's part of the point of the exercise:
 | Movie/show data, posters, cast, ratings | **Real** — live from TMDB |
 | Trailers in the "Play" state | **Real** — actual YouTube trailers via TMDB's video API |
 | Sign up / log in / sessions | **Real** — bcrypt password hashing, signed JWT session cookies, no mocking |
-| "My List" persistence | **Real** — backed by an actual SQL database (SQLite via `better-sqlite3`) |
+| "My List" persistence | **Real** — backed by an actual hosted SQL database ([Turso](https://turso.tech)/libSQL), persists on the live deployment |
 | Full-length video playback | **Not real** — no service licenses full movies/shows for this; the "Play" button opens the trailer, which is the standard, honest way every clone like this handles it |
 
 ## Stack
@@ -29,7 +29,7 @@ Being upfront about this, since it's part of the point of the exercise:
 - **TMDB API** for all catalog data — proxied through server-only code
   (`src/lib/tmdb.ts`) and Next.js API routes, so the API key never reaches
   the browser
-- **better-sqlite3** for a real embedded SQL database (users + My List)
+- **Turso** ([libSQL](https://turso.tech), the same SQL dialect as SQLite) for a real hosted database (users, profiles, My List) that persists on the live deployment
 - **bcryptjs** + **jose** for password hashing and signed session cookies
   (no third-party auth provider needed — this works immediately, with
   zero external accounts to set up)
@@ -41,15 +41,21 @@ Being upfront about this, since it's part of the point of the exercise:
    - Sign up at https://www.themoviedb.org/signup
    - Generate a key at https://www.themoviedb.org/settings/api
    - Copy the **API Read Access Token** (the long one)
-3. Copy `.env.example` to `.env.local` and fill in:
+3. Get a free [Turso](https://turso.tech) database:
+   - `turso auth signup` (or `login`), then `turso db create streamflix`
+   - `turso db show streamflix --url` for the database URL
+   - `turso db tokens create streamflix` for an auth token
+4. Copy `.env.example` to `.env.local` and fill in all four values:
    ```
    TMDB_ACCESS_TOKEN=your_token_here
    SESSION_SECRET=any_random_string   # e.g. output of `openssl rand -base64 32`
+   TURSO_DATABASE_URL=libsql://your-database.turso.io
+   TURSO_AUTH_TOKEN=your_turso_token
    ```
-4. `npm run dev` and open http://localhost:3000
+5. `npm run dev` and open http://localhost:3000
 
-The SQLite database file is created automatically on first run at
-`data/app.db` (gitignored — everyone gets a fresh local database).
+The database schema (users, profiles, My List tables) is created
+automatically on first run - no migration step needed.
 
 ## The required interactive flow
 
@@ -68,22 +74,17 @@ of a fixed list.
 
 ## Notes on deploying (Vercel)
 
-The app deploys to Vercel as-is for the browsing/search/detail-modal
-experience. One honest caveat on the auth + My List piece:
+Deployed to Vercel with a real hosted database (Turso/libSQL), so auth,
+profiles, and My List all work on the live deployment, not just locally.
 
-Vercel's serverless functions have an **ephemeral, read-only filesystem**,
-so a file-based SQLite database will not reliably persist writes across
-separate invocations in production (it works perfectly for local dev,
-where there's one long-running process). To get persistent My List data on
-a live deployment, the smallest change is swapping `better-sqlite3` for a
-hosted SQLite-compatible database like [Turso](https://turso.tech) (same
-SQL, generous free tier, no native binary) — or any hosted Postgres if
-you'd rather change the schema slightly. That's a `src/lib/db.ts` change
-only; nothing else in the app needs to know.
-
-I scoped it this way deliberately rather than pre-wiring a hosted DB I
-can't personally provision and test — happy to walk through the Turso
-swap if useful.
+This started as a local SQLite file via `better-sqlite3`, which doesn't
+work on Vercel — its serverless functions have an ephemeral, read-only
+filesystem, so a file-based database can't reliably persist writes across
+invocations in production (it worked fine for local dev, where there's one
+long-running process). Turso speaks the same SQL as SQLite, so the schema
+and queries in `src/lib/db.ts` didn't need to change - just the client
+(`@libsql/client` instead of `better-sqlite3`) and making the repo
+functions async, since Turso is a network call rather than a local file.
 
 ## Known limitations
 
@@ -98,3 +99,6 @@ swap if useful.
 - Genre filter/sort on `/search` apply to browsing; a free-text search
   query takes priority (TMDB's search endpoint doesn't support combining
   a text query with genre/sort filters).
+- **`/movies`, `/tv-shows`, and `/new-popular` are viewable while logged
+  out**, even though the homepage correctly requires signing in first.
+  Found during testing; not yet fixed.
