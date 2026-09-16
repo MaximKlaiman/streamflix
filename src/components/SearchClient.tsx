@@ -172,13 +172,20 @@ export default function SearchClient() {
 
 function TitleCardImage({ title }: { title: TitleSummary }) {
   const backdrop = title.backdropPath ? `https://image.tmdb.org/t/p/w500${title.backdropPath}` : null;
-  return backdrop ? (
-    // Plain img here keeps this grid cell simple since layout is grid-controlled, not fixed width like the rows
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={backdrop} alt={title.title} className="h-full w-full object-cover" loading="lazy" />
-  ) : (
-    <div className="flex h-full w-full items-center justify-center p-2 text-center text-xs text-nf-gray-light">
-      {title.title}
-    </div>
+  return (
+    <>
+      {backdrop ? (
+        // Plain img here keeps this grid cell simple since layout is grid-controlled, not fixed width like the rows
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={backdrop} alt={title.title} className="h-full w-full object-cover" loading="lazy" />
+      ) : (
+        <div className="h-full w-full bg-zinc-800" />
+      )}
+      {/* Always show the title, not just on the no-image fallback - a grid of
+          unlabeled thumbnails makes it impossible to tell titles apart. */}
+      <div className="absolute inset-0 flex items-end bg-gradient-to-t from-black/85 via-black/10 to-transparent">
+        <p className="line-clamp-2 p-2 text-sm font-medium text-white">{title.title}</p>
+      </div>
+    </>
   );
 }
