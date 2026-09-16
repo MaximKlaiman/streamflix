@@ -1,7 +1,7 @@
 # Streamflix — a Netflix homepage clone
 
 Built for the F26 ProductSC Developer Challenge. Recreates the Netflix
-browsing experience — hero banner, genre rows, title detail modal, a
+browsing experience. A hero banner, genre rows, title detail modal, a
 play state with a real trailer, search/filter, and a working "My List"
 feature behind real authentication.
 
